@@ -1,0 +1,35 @@
+@host = http://localhost:5080
+
+### Каталог агентов
+GET {{host}}/a2a/agents
+
+### Карточка агента-ретривера
+GET {{host}}/a2a/agents/retriever/card
+
+### Внешний источник контекста
+GET {{host}}/api/docs?q=возврат товара&limit=3
+
+### Задача без делегирующего токена — агент откажет
+POST {{host}}/a2a/agents/retriever/tasks
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "taskId": "manual-01",
+  "skill": "context.search",
+  "query": "сроки возврата товара",
+  "conversationId": "manual"
+}
+
+### Задача с токеном: рабочий токен печатает `dotnet run --project LLmSeracher -- --acl-demo`
+POST {{host}}/a2a/agents/retriever/tasks
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "taskId": "manual-02",
+  "skill": "context.search",
+  "query": "сроки возврата товара",
+  "conversationId": "manual",
+  "delegation": "ВСТАВЬТЕ_ТОКЕН"
+}
