@@ -151,7 +151,11 @@ public sealed class GraphRetriever
         if (fused.Count == 0) return [];
 
         var max = fused.Values.Max();
-        var origins = structural.ToDictionary(x => x.Id, _ => "точное совпадение имени", StringComparer.Ordinal);
+        // Группировка, а не ToDictionary: один символ приходит из FindExactAsync дважды, если
+        // запрос называет и его имя, и его файл, — UNION в Cypher различает такие строки по score.
+        var origins = structural
+            .GroupBy(x => x.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, _ => "точное совпадение имени", StringComparer.Ordinal);
 
         var fileById = structural.Concat(lexical)
             .Where(h => h.File is not null)
