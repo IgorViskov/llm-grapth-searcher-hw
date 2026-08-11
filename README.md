@@ -109,6 +109,7 @@ reviewer ──POST /a2a/agents/retriever/tasks (SSE)──> retriever ──> �
 | `Llm:ApiKey` | user-secrets | ключ API |
 | `Llm:ApiKeyEnvironmentVariable` | `Properties/launchSettings.json` | имя переменной окружения с ключом; по умолчанию `OPENAI_API_KEY` |
 | `Llm:BaseUrl` | `Properties/launchSettings.json` | адрес OpenAI-совместимого API; пусто — официальный `api.openai.com` |
+| `Llm:BypassProxy` | `appsettings.json` = `false`, в `launchSettings.json` = `true` | обращаться к модели мимо `HTTP_PROXY` / `HTTPS_PROXY` |
 | `Llm:Model` | `appsettings.json` | основная модель — генерация ответа |
 | `Llm:UtilityModel` | `appsettings.json` | модель агента-суммаризатора (сжатие контекста) |
 | `Llm:Provider` | `appsettings.json` | `auto` (по умолчанию), `openai`, `fake` |
@@ -178,8 +179,16 @@ llm: оффлайн-заглушка; ключ — переменная ACME_LLM
 в сеть, но проходит ровно тот же потоковый конвейер.
 
 Если в системе поднят локальный прокси (переменные `HTTP_PROXY` / `HTTPS_PROXY`), .NET пойдёт
-через него и на корпоративном адресе может получить обрыв TLS. Адрес модели в таком случае
-стоит исключить из проксирования: `NO_PROXY=<хост>`.
+через него и на адресе модели может получить обрыв TLS — на каждом запросе будет
+`The SSL connection could not be established`. Лечится ключом `Llm:BypassProxy`: он
+отключает прокси только для клиента модели, не трогая A2A и источники контекста.
+По умолчанию `false`, включается в `launchSettings.json`:
+
+```json
+"Llm__BypassProxy": "true"
+```
+
+Вариант без правки конфигурации — добавить хост модели в переменную `NO_PROXY`.
 
 ## Структура
 

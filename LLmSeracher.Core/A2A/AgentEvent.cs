@@ -16,21 +16,26 @@ namespace LLmSeracher.Core.A2A;
 [JsonDerivedType(typeof(FailedEvent), "failed")]
 public abstract record AgentEvent
 {
-    /// <summary>Имя SSE-события: клиент может фильтровать поток, не разбирая тело.</summary>
-    [JsonIgnore]
-    public abstract string EventType { get; }
+    /// <summary>
+    /// Имя SSE-события: клиент может фильтровать поток, не разбирая тело.
+    /// Метод, а не свойство: <c>[JsonIgnore]</c> с абстрактного члена не переносится на
+    /// переопределение в наследнике, и тип события уезжал бы в теле сообщения ещё раз,
+    /// рядом с дискриминатором "type". Методы не сериализуются никогда, поэтому новый
+    /// вид события не может случайно вернуть эту дырку.
+    /// </summary>
+    public abstract string SseEventName();
 }
 
 /// <summary>Служебная телеметрия хода выполнения — на неё удобно смотреть в демо.</summary>
 public sealed record StatusEvent(string AgentId, string Message) : AgentEvent
 {
-    public override string EventType => "status";
+    public override string SseEventName() => "status";
 }
 
 /// <summary>Контекст, который агент подключил к промпту. Приходит до первого токена.</summary>
 public sealed record ContextAttachedEvent(string AgentId, IReadOnlyList<ContextChunk> Chunks) : AgentEvent
 {
-    public override string EventType => "context";
+    public override string SseEventName() => "context";
 }
 
 /// <summary>Факт передачи задачи другому агенту.</summary>
@@ -41,13 +46,13 @@ public sealed record DelegatedEvent(
     string Reason,
     IReadOnlyList<string> Scopes) : AgentEvent
 {
-    public override string EventType => "delegated";
+    public override string SseEventName() => "delegated";
 }
 
 /// <summary>Очередной кусок ответа. Именно эти события создают эффект печати.</summary>
 public sealed record TokenEvent(string AgentId, string Text) : AgentEvent
 {
-    public override string EventType => "token";
+    public override string SseEventName() => "token";
 }
 
 public sealed record CompletedEvent(
@@ -56,12 +61,12 @@ public sealed record CompletedEvent(
     double ElapsedMs,
     IReadOnlyList<SourceRef> Sources) : AgentEvent
 {
-    public override string EventType => "completed";
+    public override string SseEventName() => "completed";
 }
 
 public sealed record FailedEvent(string AgentId, string Message) : AgentEvent
 {
-    public override string EventType => "failed";
+    public override string SseEventName() => "failed";
 }
 
 public sealed record SourceRef(int Number, string SourceId, string Title);

@@ -35,6 +35,15 @@ public sealed class LlmOptions
     /// </summary>
     public string? BaseUrl { get; set; }
 
+    /// <summary>
+    /// Обращаться к модели в обход системного прокси (<c>HTTP_PROXY</c> / <c>HTTPS_PROXY</c>).
+    /// По умолчанию выключено: обычная работа через корпоративный прокси не должна ломаться
+    /// из-за настройки в коде. Включать, когда прокси рвёт TLS-рукопожатие до хоста модели —
+    /// симптом: «The SSL connection could not be established» на каждом запросе.
+    /// Альтернатива без перекомпиляции — добавить хост модели в переменную <c>NO_PROXY</c>.
+    /// </summary>
+    public bool BypassProxy { get; set; }
+
     /// <summary>Основная модель — генерация ответа.</summary>
     public string Model { get; set; } = "gpt-4o-mini";
 

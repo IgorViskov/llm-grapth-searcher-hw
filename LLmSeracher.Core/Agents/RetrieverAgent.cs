@@ -19,15 +19,7 @@ public sealed class RetrieverAgent : IAgent
     private readonly ContextOptions _contextOptions;
     private readonly ILogger<RetrieverAgent> _logger;
 
-    public AgentCard Card { get; } = new(
-        Id: AgentIds.Retriever,
-        Name: "Retriever",
-        Description: "Ищет фрагменты в базе знаний: файлы *.md и внешний API документов.",
-        Skills:
-        [
-            new AgentSkill(Skills.ContextSearch, "Вернуть релевантные фрагменты контекста",
-                [Scopes.ContextRead])
-        ]);
+    public AgentCard Card { get; }
 
     public RetrieverAgent(
         IContextProvider context,
@@ -41,6 +33,22 @@ public sealed class RetrieverAgent : IAgent
         _a2a = a2a.Value;
         _contextOptions = contextOptions.Value;
         _logger = logger;
+
+        // Состав источников задаётся конфигурацией и меняется от стенда к стенду,
+        // поэтому карточка собирается из фактически подключённых, а не из строки в коде:
+        // вызывающая сторона читает её как правду о том, где агент будет искать.
+        var sources = context.SourceNames;
+        Card = new AgentCard(
+            Id: AgentIds.Retriever,
+            Name: "Retriever",
+            Description: sources.Count > 0
+                ? $"Ищет фрагменты контекста в подключённых источниках: {string.Join(", ", sources)}."
+                : "Ищет фрагменты контекста, но ни один источник не подключён.",
+            Skills:
+            [
+                new AgentSkill(Skills.ContextSearch, "Вернуть релевантные фрагменты контекста",
+                    [Scopes.ContextRead])
+            ]);
     }
 
     public async IAsyncEnumerable<AgentEvent> ExecuteAsync(

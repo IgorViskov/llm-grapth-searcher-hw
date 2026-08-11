@@ -116,5 +116,5 @@ static async IAsyncEnumerable<SseItem<AgentEvent>> StreamAgent(
     IAgent agent, AgentTask task, [EnumeratorCancellation] CancellationToken ct)
 {
     await foreach (var evt in AgentStream.Guarded(agent.Card.Id, agent.ExecuteAsync(task, ct), ct))
-        yield return new SseItem<AgentEvent>(evt, evt.EventType);
+        yield return new SseItem<AgentEvent>(evt, evt.SseEventName());
 }

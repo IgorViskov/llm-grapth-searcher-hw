@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using LLmSeracher.Core.A2A;
 using LLmSeracher.Core.Agents;
 using LLmSeracher.Core.Context;
@@ -135,6 +136,13 @@ public static class ServiceCollectionExtensions
         var clientOptions = new OpenAIClientOptions();
         if (!string.IsNullOrWhiteSpace(options.BaseUrl))
             clientOptions.Endpoint = new Uri(options.BaseUrl);
+
+        // Подменяем транспорт целиком: у HttpClient прокси задаётся только на обработчике,
+        // и другого способа отключить его для одного клиента нет. Затрагивает исключительно
+        // запросы к модели — A2A и источники контекста ходят своими HttpClient'ами.
+        if (options.BypassProxy)
+            clientOptions.Transport = new HttpClientPipelineTransport(
+                new HttpClient(new HttpClientHandler { UseProxy = false }));
 
         var openAi = new OpenAIClient(credential, clientOptions);
 

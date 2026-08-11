@@ -26,6 +26,9 @@ public sealed class CompositeContextProvider : IContextProvider
 
     public string Name => "composite";
 
+    /// <summary>Имена включённых листьев — по ним строится карточка агента-ретривера.</summary>
+    public IReadOnlyList<string> SourceNames { get; }
+
     public CompositeContextProvider(
         IEnumerable<IContextProvider> providers,
         IOptions<ContextOptions> options,
@@ -34,6 +37,7 @@ public sealed class CompositeContextProvider : IContextProvider
         _providers = providers.ToArray();
         _options = options.Value;
         _logger = logger;
+        SourceNames = _providers.SelectMany(p => p.SourceNames).Distinct(StringComparer.Ordinal).ToArray();
     }
 
     public async IAsyncEnumerable<ContextChunk> SearchAsync(
