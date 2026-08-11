@@ -46,6 +46,10 @@ internal sealed class ConsoleRenderer
                 break;
 
             case TokenEvent token:
+                // Модели часто начинают ответ с пустых строк — заголовок «ответ» и первый
+                // видимый текст не должны разъезжаться на пол-экрана.
+                if (!_answerStarted && string.IsNullOrWhiteSpace(token.Text)) break;
+
                 if (!_answerStarted)
                 {
                     _answerStarted = true;
@@ -54,7 +58,12 @@ internal sealed class ConsoleRenderer
                 }
 
                 _tokenCount++;
-                AnsiConsole.Write(token.Text);
+
+                // Именно Console.Write, а не AnsiConsole.Write: последний трактует строку
+                // как шаблон форматирования, и первая же фигурная скобка в потоке кода
+                // (например `$"нет полномочия '{scope}'"`) роняет приложение
+                // с FormatException прямо посреди ответа.
+                Console.Write(token.Text);
                 break;
 
             case CompletedEvent completed:

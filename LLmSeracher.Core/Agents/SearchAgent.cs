@@ -137,8 +137,19 @@ public sealed class SearchAgent : IAgent
 
             if (!string.IsNullOrWhiteSpace(compressed))
             {
-                contextBlock = compressed.Trim();
-                yield return new StatusEvent(Card.Id, $"контекст сжат до {contextBlock.Length} симв.");
+                // Сжатие принимается, только если номера по-прежнему указывают на те же
+                // фрагменты: список источников строится по исходному порядку, и разъехавшаяся
+                // нумерация даёт ответ с правильными фактами и неправильными ссылками.
+                if (PromptBuilder.PreservesNumbering(compressed, chunks))
+                {
+                    contextBlock = compressed.Trim();
+                    yield return new StatusEvent(Card.Id, $"контекст сжат до {contextBlock.Length} симв.");
+                }
+                else
+                {
+                    yield return new StatusEvent(Card.Id,
+                        "сжатый контекст потерял привязку номеров к фрагментам — беру контекст целиком");
+                }
             }
         }
 
@@ -148,7 +159,9 @@ public sealed class SearchAgent : IAgent
 
         List<ChatMessage> messages =
         [
-            new(ChatRole.System, PromptBuilder.BuildAnswerSystemPrompt(contextBlock)),
+            // Профиль промпта выбирается по самому контексту: кодовые фрагменты требуют
+            // других правил цитирования, чем markdown-справка.
+            new(ChatRole.System, PromptBuilder.BuildAnswerSystemPrompt(contextBlock, chunks)),
             new(ChatRole.User, task.Query)
         ];
 

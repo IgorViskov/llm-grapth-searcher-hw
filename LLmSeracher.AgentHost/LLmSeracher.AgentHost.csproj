@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LLmSeracher.Core\LLmSeracher.Core.csproj" />
+    <ProjectReference Include="..\LLmSeracher.Graph\LLmSeracher.Graph.csproj" />
   </ItemGroup>
 
   <!-- База знаний лежит в корне решения и копируется в вывод: один источник правды
@@ -14,6 +15,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Тот же идентификатор, что у консольного клиента: ключ задаётся один раз
+         и виден обоим процессам — хосту он нужен для агента-суммаризатора. -->
+    <UserSecretsId>llmseracher-homework</UserSecretsId>
   </PropertyGroup>
 
 </Project>

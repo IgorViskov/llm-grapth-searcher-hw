@@ -1,5 +1,9 @@
 bin/
 obj/
+
+# Локальные настройки запуска: адрес модели и имя переменной с ключом у каждого свои
+**/Properties/launchSettings.json
+
 /packages/
 riderModule.iml
 /_ReSharper.Caches/

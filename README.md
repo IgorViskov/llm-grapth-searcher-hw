@@ -22,7 +22,37 @@
 ## Требования
 
 .NET SDK 10.0. Ключ OpenAI не обязателен: без него включается оффлайн-заглушка LLM,
-и сценарий воспроизводится полностью.
+и сценарий воспроизводится полностью. Для графа кода — Docker.
+
+## Граф кода
+
+Основной источник контекста — граф кода в Neo4j: поиск идёт по нему, а не по файлам.
+Анализ выбора БД и модели графа — [GRAPH-CONTEXT-ANALYSIS.md](GRAPH-CONTEXT-ANALYSIS.md).
+
+Поднять БД:
+
+```bash
+docker compose up -d
+```
+
+Проиндексировать решение (первый запуск — с очисткой графа):
+
+```bash
+dotnet run --project LLmSeracher.Indexer -- index --reset
+```
+
+Дальше достаточно `index` без ключа: повторный прогон снимает рёбра изменившихся файлов
+и записывает их заново, счётчики графа не растут. Проверить поиск без участия LLM:
+
+```bash
+dotnet run --project LLmSeracher.Indexer -- search "кто вызывает SearchAsync"
+```
+
+Браузер графа — <http://localhost:7474> (`neo4j` / `llmsearcher-local`).
+
+Какие источники контекста включены, задаёт `Context:Sources` в `appsettings.json`:
+`["code-graph"]` — только граф (по умолчанию), `["files", "docs-api"]` — markdown-справка
+из `knowledge/`, под которую написаны `--demo`-вопросы про интернет-магазин.
 
 ## Запуск
 
@@ -48,32 +78,110 @@ dotnet run --project LLmSeracher -- --local "Действует ли гаран�
 
 | Команда | Что показывает |
 |---|---|
-| `dotnet run --project LLmSeracher -- --demo` | три вопроса подряд: контекст, делегирование, streaming |
+| `dotnet run --project LLmSeracher -- --demo` | три вопроса к графу кода: обратные вызовы, реализации интерфейса через DI, «почему так сделано» |
 | `dotnet run --project LLmSeracher -- --acl-demo` | отказ агента без токена, успех с токеном, отказ при чужом scope |
 | `dotnet run --project LLmSeracher` | интерактивный режим; **Ctrl+C** прерывает генерацию, не убивая приложение |
 | `dotnet run --project LLmSeracher -- --local` | та же логика агентов без сети — доказательство, что транспорт подменяем |
 
 Ключи: `--host <url>` — адрес хоста агентов, `--help` — справка.
 
-## Ключ OpenAI
+## Подключение модели
+
+Настройки разнесены по трём местам — по тому, что можно коммитить:
+
+| Ключ | Где задаётся | Что задаёт |
+|---|---|---|
+| `Llm:ApiKey` | user-secrets | ключ API |
+| `Llm:ApiKeyEnvironmentVariable` | `Properties/launchSettings.json` | имя переменной окружения с ключом; по умолчанию `OPENAI_API_KEY` |
+| `Llm:BaseUrl` | `Properties/launchSettings.json` | адрес OpenAI-совместимого API; пусто — официальный `api.openai.com` |
+| `Llm:Model` | `appsettings.json` | основная модель — генерация ответа |
+| `Llm:UtilityModel` | `appsettings.json` | модель агента-суммаризатора (сжатие контекста) |
+| `Llm:Provider` | `appsettings.json` | `auto` (по умолчанию), `openai`, `fake` |
+
+`launchSettings.json` обоих проектов исключён из гита: адрес модели и имя переменной с ключом
+у каждого свои. В свежем клоне этих файлов нет — приложение поднимается на оффлайн-заглушке
+и остаётся работоспособным. Чтобы подключить модель, создайте
+`LLmSeracher/Properties/launchSettings.json` и `LLmSeracher.AgentHost/Properties/launchSettings.json`:
+
+```json
+{
+  "profiles": {
+    "LLmSeracher": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "Llm__ApiKeyEnvironmentVariable": "ACME_LLM_TOKEN",
+        "Llm__BaseUrl": "http://localhost:1234/v1"
+      }
+    }
+  }
+}
+```
+
+Двойное подчёркивание — разделитель уровней конфигурации в переменных окружения:
+`Llm__BaseUrl` читается как `Llm:BaseUrl`. Применяет эти переменные `dotnet run`;
+при запуске собранного `.exe` напрямую `launchSettings.json` не участвует — тогда задавайте
+`Llm__BaseUrl` в окружении сами.
+
+**Ключ не хранить в `appsettings.json`** — он в репозитории:
 
 ```bash
 dotnet user-secrets --project LLmSeracher set "Llm:ApiKey" "sk-..."
 ```
 
-Либо переменная окружения `OPENAI_API_KEY`. Модель задаётся в `appsettings.json`
-(`Llm:Model`, по умолчанию `gpt-4o-mini`). Без ключа `Llm:Provider=auto` переключается
-на `FakeChatClient`: он не ходит в сеть, но проходит ровно тот же потоковый конвейер.
+Переменная окружения с ключом читается, только если `Llm:ApiKey` пуст. Заданное имя
+используется как единственное — отката на `OPENAI_API_KEY` нет, иначе опечатка молча уводила
+бы приложение на чужой ключ. Что именно сработало, видно в первой строке вывода:
+
+```
+llm: gpt-4o-mini @ api.openai.com; ключ — переменная ACME_LLM_TOKEN
+llm: оффлайн-заглушка; ключ — переменная ACME_LLM_TOKN пуста, адрес API не задан
+```
+
+Адрес API берётся и из переменной `OPENAI_BASE_URL` — это имя фиксированное.
+
+**Настраивать нужно оба процесса.** Консольный клиент выполняет финальную генерацию,
+хост агентов — сжатие контекста суммаризатором, поэтому `launchSettings.json` нужен обоим.
+Ключ общий: у проектов один `UserSecretsId`, команда выше покрывает оба.
+
+### OpenAI-совместимый API
+
+`Llm:BaseUrl` указывается **вместе с версией пути**: SDK дописывает к нему только
+`/chat/completions`.
+
+| Сервис | `Llm:BaseUrl` | `Llm:Model` (пример) |
+|---|---|---|
+| LM Studio | `http://localhost:1234/v1` | `qwen2.5-coder-14b-instruct` |
+| Ollama | `http://localhost:11434/v1` | `qwen2.5-coder:14b` |
+| vLLM | `http://localhost:8000/v1` | путь к весам, как его отдаёт сервер |
+| OpenRouter | `https://openrouter.ai/api/v1` | `anthropic/claude-sonnet-4.5` |
+
+Локальные серверы ключ обычно не проверяют: достаточно указать `BaseUrl`, и `Provider=auto`
+сам переключится с оффлайн-заглушки на реальную модель. Куда уходят запросы, видно в шапке
+вывода: `модель: qwen2.5-coder-14b-instruct @ localhost:1234`.
+
+Если не задано ни ключа, ни адреса, `Llm:Provider=auto` включает `FakeChatClient`: он не ходит
+в сеть, но проходит ровно тот же потоковый конвейер.
+
+Если в системе поднят локальный прокси (переменные `HTTP_PROXY` / `HTTPS_PROXY`), .NET пойдёт
+через него и на корпоративном адресе может получить обрыв TLS. Адрес модели в таком случае
+стоит исключить из проксирования: `NO_PROXY=<хост>`.
 
 ## Структура
 
 ```
-knowledge/                    база знаний (*.md) — источник контекста №1
+knowledge/                    база знаний (*.md) — markdown-источник контекста
+docker-compose.yml            Neo4j для графа кода
 LLmSeracher.Core/             контракты и реализации
-  Context/                    IContextProvider: файлы, HTTP API, композит
+  Context/                    IContextProvider: файлы, HTTP API, композит (слияние RRF)
   Llm/                        IChatClient: OpenAI и оффлайн-заглушка
   A2A/                        AgentCard, AgentTask, AgentEvent, транспорты, делегирование
   Agents/                     SearchAgent, RetrieverAgent, SummarizerAgent, PromptBuilder
+LLmSeracher.Graph/            граф кода
+  Model/                      виды узлов и рёбер, элементы батча
+  Neo4jGraphStore.cs          схема, инкрементальный upsert, чтение
+  Retrieval/                  каналы поиска, обход, ранжирование
+  GraphContextProvider.cs     граф за тем же IContextProvider
+LLmSeracher.Indexer/          разбор решения Roslyn'ом: index / stats / search
 LLmSeracher.AgentHost/        ASP.NET Core: карточки агентов, приём задач (SSE), /api/docs
 LLmSeracher/                  консольный клиент и сценарии
 ```

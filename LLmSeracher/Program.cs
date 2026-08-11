@@ -2,7 +2,9 @@ using LLmSeracher.Cli;
 using LLmSeracher.Core;
 using LLmSeracher.Core.A2A;
 using LLmSeracher.Core.Agents;
+using LLmSeracher.Core.Context;
 using LLmSeracher.Core.Llm;
+using LLmSeracher.Graph;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -36,9 +38,15 @@ builder.Services.AddSearcherCore(builder.Configuration);
 // Единственное отличие двух режимов — реализация IAgentClient.
 // Код агента-оркестратора при этом не меняется вообще.
 if (cli.Local)
+{
     builder.Services.AddInProcessAgentTransport();
+    // В локальном режиме ретривер живёт здесь же — значит, и граф нужен здесь.
+    builder.Services.AddCodeGraph(builder.Configuration);
+}
 else
+{
     builder.Services.AddHttpAgentTransport();
+}
 
 builder.Services.AddSingleton<SearchAgent>();
 
@@ -49,7 +57,9 @@ var agentClient = host.Services.GetRequiredService<IAgentClient>();
 var delegation = host.Services.GetRequiredService<DelegationService>();
 var llm = host.Services.GetRequiredService<IOptions<LlmOptions>>().Value;
 var renderer = new ConsoleRenderer();
-var modelLabel = llm.UseOpenAi ? llm.Model : "offline-stub";
+// Эндпоинт печатаем рядом с моделью: при работе с OpenAI-совместимым API это единственный
+// способ увидеть, что запросы уходят туда, куда задумано.
+var modelLabel = llm.UseOpenAi ? $"{llm.Model} @ {llm.EndpointLabel}" : "offline-stub";
 
 CancellationTokenSource? currentOperation = null;
 Console.CancelKeyPress += (_, e) =>
@@ -63,6 +73,12 @@ Console.CancelKeyPress += (_, e) =>
 
 AnsiConsole.Write(new FigletText("LLM Searcher").Color(Color.Blue));
 
+// Откуда взялся ключ, видно сразу: иначе опечатка в имени переменной окружения выглядит
+// как беспричинный уход в оффлайн-режим.
+AnsiConsole.MarkupLine(llm.UseOpenAi
+    ? $"[grey]llm: {Markup.Escape(llm.Model)} @ {Markup.Escape(llm.EndpointLabel)}; ключ — {Markup.Escape(llm.ApiKeySource)}[/]"
+    : $"[grey]llm: оффлайн-заглушка; ключ — {Markup.Escape(llm.ApiKeySource)}, адрес API не задан[/]");
+
 if (!cli.Local && !await PingHostAsync()) return 1;
 if (cli.Local) AnsiConsole.MarkupLine("[grey]сеть агентов: in-process (retriever, summarizer в этом же процессе)[/]");
 
@@ -74,7 +90,14 @@ if (cli.AclDemo)
 
 if (cli.Demo)
 {
-    foreach (var question in CliOptions.DemoQuestions)
+    // Набор вопросов зависит от того, какой источник включён: спрашивать про сроки
+    // возврата у графа кода бессмысленно ровно так же, как про CALLS у markdown-справки.
+    var sources = host.Services.GetRequiredService<IOptions<ContextOptions>>().Value.Sources;
+    var questions = sources.Contains(ContextSources.CodeGraph, StringComparer.OrdinalIgnoreCase)
+        ? CliOptions.CodeDemoQuestions
+        : CliOptions.DemoQuestions;
+
+    foreach (var question in questions)
         await AskAsync(question);
 
     return 0;
@@ -140,8 +163,19 @@ async Task InteractiveAsync()
 
     while (true)
     {
-        var question = AnsiConsole.Prompt(
-            new TextPrompt<string>("[blue]?[/]").AllowEmpty());
+        AnsiConsole.Markup("[blue]?[/] ");
+
+        // Spectre.Console TextPrompt читает клавиши, а не строку, и падает
+        // InvalidOperationException("Failed to read input in non-interactive mode"),
+        // если поток ввода или вывода перенаправлен — конвейер, запуск из IDE, CI.
+        // Console.ReadLine работает в обоих случаях; null — это конец ввода,
+        // штатный выход, а не ошибка.
+        var question = Console.ReadLine();
+        if (question is null)
+        {
+            AnsiConsole.WriteLine();
+            return;
+        }
 
         if (string.IsNullOrWhiteSpace(question) ||
             question.Equals("exit", StringComparison.OrdinalIgnoreCase))
@@ -156,7 +190,7 @@ async Task InteractiveAsync()
 /// </summary>
 async Task AclDemoAsync()
 {
-    var task = AgentTask.Create(Skills.ContextSearch, "возврат товара надлежащего качества");
+    var task = AgentTask.Create(Skills.ContextSearch, "проверка scope в DelegationService");
 
     AnsiConsole.Write(new Rule("[bold]1. Задача агенту retriever без делегирующего токена[/]").LeftJustified());
     await foreach (var evt in agentClient.SendAsync(AgentIds.Retriever, task, CancellationToken.None))

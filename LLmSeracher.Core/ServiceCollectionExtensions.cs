@@ -6,6 +6,7 @@ using LLmSeracher.Core.Llm;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenAI;
 
@@ -23,12 +24,29 @@ public static class ServiceCollectionExtensions
         services.Configure<AgentOptions>(config.GetSection("Agents"));
         services.Configure<LlmOptions>(config.GetSection("Llm"));
 
-        // Ключ из переменной окружения имеет приоритет над пустым значением в конфиге,
-        // чтобы не хранить секрет в репозитории.
+        // Переменные окружения подхватываются, только если в конфиге пусто, — чтобы не хранить
+        // секрет в репозитории и при этом не ломать явную настройку в appsettings.
         services.PostConfigure<LlmOptions>(options =>
-            options.ApiKey = string.IsNullOrWhiteSpace(options.ApiKey)
-                ? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-                : options.ApiKey);
+        {
+            if (!string.IsNullOrWhiteSpace(options.ApiKey))
+            {
+                options.ApiKeySource = "конфигурация";
+            }
+            else
+            {
+                var variable = string.IsNullOrWhiteSpace(options.ApiKeyEnvironmentVariable)
+                    ? LlmOptions.DefaultApiKeyVariable
+                    : options.ApiKeyEnvironmentVariable.Trim();
+
+                options.ApiKey = Environment.GetEnvironmentVariable(variable);
+                options.ApiKeySource = string.IsNullOrWhiteSpace(options.ApiKey)
+                    ? $"переменная {variable} пуста"
+                    : $"переменная {variable}";
+            }
+
+            if (string.IsNullOrWhiteSpace(options.BaseUrl))
+                options.BaseUrl = Environment.GetEnvironmentVariable("OPENAI_BASE_URL");
+        });
 
         services.AddSingleton<DelegationService>();
         services.AddSingleton(CreateChatClient);
@@ -36,7 +54,10 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>Источники контекста: файлы + внешний API, объединённые композитом.</summary>
+    /// <summary>
+    /// Источники контекста: файлы + внешний API, объединённые композитом. Граф кода
+    /// подключается отдельно, из проекта LLmSeracher.Graph — Core о нём не знает.
+    /// </summary>
     public static IServiceCollection AddContextSources(this IServiceCollection services)
     {
         services.AddHttpClient(HttpDocsContextProvider.HttpClientName, (sp, http) =>
@@ -46,16 +67,22 @@ public static class ServiceCollectionExtensions
             http.Timeout = TimeSpan.FromSeconds(15);
         });
 
-        services.AddSingleton<FileContextProvider>();
-        services.AddSingleton<HttpDocsContextProvider>();
+        // Листовые источники регистрируются под ключом: композит собирает именно их,
+        // а сам публикуется как обычный IContextProvider — цикла не возникает.
+        services.AddKeyedSingleton<IContextProvider, FileContextProvider>(ContextSources.LeafKey);
+        services.AddKeyedSingleton<IContextProvider, HttpDocsContextProvider>(ContextSources.LeafKey);
 
-        // Композит регистрируется явно, а не через IEnumerable<IContextProvider>:
-        // иначе он попал бы в собственную коллекцию источников и получился бы цикл.
-        services.AddSingleton<IContextProvider>(sp => new CompositeContextProvider(
-        [
-            sp.GetRequiredService<FileContextProvider>(),
-            sp.GetRequiredService<HttpDocsContextProvider>()
-        ], sp.GetRequiredService<IOptions<ContextOptions>>()));
+        services.AddSingleton<IContextProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<ContextOptions>>();
+            var enabled = options.Value.Sources;
+
+            var leaves = sp.GetKeyedServices<IContextProvider>(ContextSources.LeafKey)
+                .Where(p => enabled.Length == 0 || enabled.Contains(p.Name, StringComparer.OrdinalIgnoreCase));
+
+            return new CompositeContextProvider(
+                leaves, options, sp.GetRequiredService<ILogger<CompositeContextProvider>>());
+        });
 
         return services;
     }
@@ -100,7 +127,19 @@ public static class ServiceCollectionExtensions
         if (!options.UseOpenAi)
             return new FakeChatClient(accessor);
 
-        var openAi = new OpenAIClient(new ApiKeyCredential(options.ApiKey!));
+        // Локальные OpenAI-совместимые серверы ключ не проверяют, но SDK требует непустое
+        // значение — подставляем заглушку, иначе клиент не создастся.
+        var credential = new ApiKeyCredential(
+            string.IsNullOrWhiteSpace(options.ApiKey) ? "no-key-required" : options.ApiKey);
+
+        var clientOptions = new OpenAIClientOptions();
+        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+            clientOptions.Endpoint = new Uri(options.BaseUrl);
+
+        var openAi = new OpenAIClient(credential, clientOptions);
+
+        // Модель здесь задаёт значение по умолчанию; агенты перекрывают её через
+        // ChatOptions.ModelId — отвечающий берёт Model, суммаризатор UtilityModel.
         return openAi.GetChatClient(options.Model).AsIChatClient();
     }
 }

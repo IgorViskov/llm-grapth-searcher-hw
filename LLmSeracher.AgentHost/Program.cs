@@ -4,6 +4,13 @@ using System.Text.Json.Serialization;
 using LLmSeracher.AgentHost;
 using LLmSeracher.Core;
 using LLmSeracher.Core.A2A;
+using LLmSeracher.Core.Context;
+using LLmSeracher.Graph;
+using Microsoft.Extensions.Options;
+
+// Как и в консольном клиенте: без этого кириллица в логах хоста на Windows выводится
+// знаками вопроса, а при перенаправлении вывода в файл — мусором.
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -11,8 +18,16 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory
 });
 
+// Явно, а не через автоматику ASP.NET Core: та подключает user-secrets только в окружении
+// Development, и запуск собранного exe остался бы без ключа.
+builder.Configuration.AddUserSecrets<Program>(optional: true);
+
 builder.Services.AddSearcherCore(builder.Configuration);
 builder.Services.AddHostedAgents();
+
+// Граф кода — ещё один источник контекста. Регистрация листовая: композит в Core подхватит
+// его наравне с файлами, а какие источники реально включены, решает Context:Sources.
+builder.Services.AddCodeGraph(builder.Configuration);
 
 // Настройки сериализации должны совпадать с A2AJson на стороне клиента,
 // иначе полиморфные события не разберутся.
@@ -22,6 +37,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var app = builder.Build();
+
+// Стартовая проверка графа. Недоступная или пустая БД проявляется только в самом конце
+// цепочки — сообщением «релевантный контекст не найден», по которому причину не установить:
+// источник контекста по контракту логирует отказ и молча пропускается.
+await ReportGraphStateAsync(app);
 
 app.MapGet("/", (IEnumerable<IAgent> agents) =>
     Results.Text("LLmSeracher Agent Host\n" +
@@ -61,6 +81,32 @@ app.Run();
 
 static IAgent? Find(IEnumerable<IAgent> agents, string agentId) =>
     agents.FirstOrDefault(a => string.Equals(a.Card.Id, agentId, StringComparison.OrdinalIgnoreCase));
+
+static async Task ReportGraphStateAsync(WebApplication app)
+{
+    var sources = app.Services.GetRequiredService<IOptions<ContextOptions>>().Value.Sources;
+    var graphEnabled = sources.Length == 0 ||
+                       sources.Contains(ContextSources.CodeGraph, StringComparer.OrdinalIgnoreCase);
+
+    if (!graphEnabled) return;
+
+    var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("CodeGraph");
+    var store = app.Services.GetRequiredService<IGraphStore>();
+
+    try
+    {
+        var stats = await store.GetStatsAsync(CancellationToken.None);
+        if (stats.Nodes == 0)
+            logger.LogWarning(
+                "Граф кода пуст. Наполнить: dotnet run --project LLmSeracher.Indexer -- index --reset");
+        else
+            logger.LogInformation("Граф кода: {Nodes} узлов, {Edges} рёбер", stats.Nodes, stats.Edges);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError("Граф кода недоступен ({Message}). Поднять БД: docker compose up -d", ex.Message);
+    }
+}
 
 /// <summary>
 /// Каждое событие агента уходит отдельным SSE-сообщением с собственным типом:

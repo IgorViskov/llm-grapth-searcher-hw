@@ -18,4 +18,37 @@ public sealed record ContextChunk(
 {
     /// <summary>Ключ для дедупликации фрагментов, пришедших из нескольких источников.</summary>
     public string Key => $"{SourceId}/{DocumentId}";
+
+    // ── Кодовые атрибуты ─────────────────────────────────────────────────────────────
+    // Все свойства опциональны: markdown-источники их не заполняют, JSON-контракт A2A
+    // остаётся совместимым со старыми узлами сети.
+
+    /// <summary>Язык фрагмента — задаёт подсветку в промпте: "csharp", "typescript", "python".</summary>
+    public string? Language { get; init; }
+
+    /// <summary>Путь файла относительно корня репозитория.</summary>
+    public string? FilePath { get; init; }
+
+    public int? StartLine { get; init; }
+    public int? EndLine { get; init; }
+
+    /// <summary>Идентификатор символа в графе — стабилен между сборками.</summary>
+    public string? SymbolId { get; init; }
+
+    /// <summary>Вид фрагмента: Method, Type, Property, Field, GraphEdges, Doc.</summary>
+    public string? Kind { get; init; }
+
+    /// <summary>
+    /// Почему фрагмент подключён: путь в графе от точки входа. Попадает в промпт и в
+    /// консоль — без него графовая выдача необъяснима, а с ним видно ход рассуждения.
+    /// </summary>
+    public string? Rationale { get; init; }
+
+    /// <summary>Ссылка на место в коде для цитирования: <c>path/File.cs:24-62</c>.</summary>
+    public string? Location => FilePath is null
+        ? null
+        : StartLine is null ? FilePath : $"{FilePath}:{StartLine}-{EndLine ?? StartLine}";
+
+    /// <summary>Фрагмент пришёл из кода, а не из markdown-справки.</summary>
+    public bool IsCode => Language is not null || FilePath is not null;
 }

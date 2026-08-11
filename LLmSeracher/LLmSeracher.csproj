@@ -13,6 +13,7 @@
         <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
         <!-- Та же база знаний, что и у хоста: нужна для локального режима. -->
         <Content Include="..\knowledge\**\*.md" LinkBase="knowledge" CopyToOutputDirectory="PreserveNewest" />
+        <Content Remove="..\knowledge\**" />
     </ItemGroup>
 
     <ItemGroup>
@@ -23,6 +24,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\LLmSeracher.Core\LLmSeracher.Core.csproj" />
+    <ProjectReference Include="..\LLmSeracher.Graph\LLmSeracher.Graph.csproj" />
     </ItemGroup>
 
 </Project>

@@ -89,7 +89,28 @@ public interface IContextProvider
 |---|---|---|
 | `FileContextProvider` | `knowledge/*.md`, режется по заголовкам `## `, ранжируется по совпадению токенов | хост агентов |
 | `HttpDocsContextProvider` | `GET /api/docs?q=&limit=`, ответ читается как поток JSON-элементов | хост агентов |
-| `CompositeContextProvider` | опрашивает источники параллельно, дедуплицирует, отдаёт top-N | хост агентов |
+| `GraphContextProvider` | граф кода в Neo4j: точки входа → обход по связям → ранжирование | хост агентов |
+| `CompositeContextProvider` | опрашивает источники параллельно, сливает по RRF, отдаёт top-N | хост агентов |
+
+Состав источников задаётся `Context:Sources`; по умолчанию включён один `code-graph`.
+Слияние идёт по Reciprocal Rank Fusion, а не по сырому `Score`: у файлов это доля совпавших
+токенов, у графа — результат ранжирования обхода, величины несопоставимы по шкале.
+
+### Граф кода как источник
+
+Граф наполняет отдельная утилита `LLmSeracher.Indexer`: Roslyn разбирает решение по
+семантической модели и пишет узлы (`Project`, `File`, `Type`, `Method`, `Property`, `Field`)
+и рёбра (`CALLS`, `IMPLEMENTS_MEMBER`, `REGISTERED_AS`, `INSTANTIATES`, …). Ключ узла —
+`ISymbol.GetDocumentationCommentId()`, поэтому MERGE устойчив между сборками.
+
+Поиск идёт в три шага: точки входа ищутся структурным (явный идентификатор в вопросе)
+и полнотекстовым каналами и сливаются по RRF; от них идёт обход на 1–2 шага по типизированным
+рёбрам с затуханием; результат режется под бюджет с ограничением на файл. Каждый фрагмент несёт
+`Rationale` — путь в графе, по которому он подключён («вызывается из `SearchAgent.ExecuteAsync`»).
+
+Тела символов хранятся в самом графе (свойство `snippet`), к диску на этапе поиска обращений нет.
+
+Подробности и разбор выбора БД — [GRAPH-CONTEXT-ANALYSIS.md](GRAPH-CONTEXT-ANALYSIS.md).
 
 Путь контекста в промпт:
 
@@ -171,6 +192,11 @@ public sealed record DelegationPayload(
 | `A2A` | `SelfId`, `HostUrl`, `SigningSecret`, `RequireDelegation` |
 | `Agents` | `SummarizeThresholdChars`, `SummaryBudgetChars`, `ContextLimit` |
 | `Llm` | `Provider` (auto/openai/fake), `ApiKey`, `Model`, `UtilityModel`, `FakeDelayMs` |
+
+`Llm:ApiKeyEnvironmentVariable` и `Llm:BaseUrl` вынесены из `appsettings.json` в
+`Properties/launchSettings.json` каждого запускаемого проекта (`Llm__ApiKeyEnvironmentVariable`,
+`Llm__BaseUrl`) — эти файлы исключены из гита: адрес модели и имя переменной с ключом
+у каждого разработчика свои.
 
 `SigningSecret` общий для всех узлов и лежит в `appsettings.json` только потому, что это
 учебный стенд. В реальной системе здесь были бы асимметричные ключи и публикация JWKS,

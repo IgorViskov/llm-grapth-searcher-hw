@@ -1,0 +1,41 @@
+# Локальный Neo4j для графа кода.
+#
+#   docker compose up -d          поднять
+#   docker compose down           остановить (данные сохраняются в томах)
+#   docker compose down -v        остановить и стереть граф
+#
+# Браузер: http://localhost:7474  (neo4j / llmsearcher-local)
+# Bolt:    bolt://localhost:7687  — этот адрес читает приложение из Graph:Uri
+
+services:
+  neo4j:
+    # Календарный релиз; LTS-альтернатива при необходимости — neo4j:5.26-community
+    image: neo4j:2026.06-community
+    container_name: llmsearcher-neo4j
+    # Без этого перезапуск Docker Desktop оставляет граф недоступным, а приложение
+    # молча деградирует до пустого контекста — источник логируется и пропускается.
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP / Neo4j Browser
+      - "7687:7687"   # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/llmsearcher-local
+      # Граф одного репозитория целиком помещается в память — обходы идут без обращения к диску
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_db_transaction_timeout: 120s
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      # Порт открывается раньше, чем база готова принимать Cypher, — проверяем именно запросом
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p llmsearcher-local 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  neo4j-data:
+  neo4j-logs:

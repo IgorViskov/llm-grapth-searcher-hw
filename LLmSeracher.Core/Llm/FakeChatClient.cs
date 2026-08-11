@@ -14,6 +14,9 @@ namespace LLmSeracher.Core.Llm;
 /// </summary>
 public sealed partial class FakeChatClient : IChatClient
 {
+    /// <summary>Начало системного промпта суммаризатора — см. <c>PromptBuilder.BuildSummarySystemPrompt</c>.</summary>
+    private const string SummarizerMarker = "Ты — агент-суммаризатор";
+
     private readonly LlmOptions _options;
 
     public FakeChatClient(IOptions<LlmOptions> options) => _options = options.Value;
@@ -40,8 +43,11 @@ public sealed partial class FakeChatClient : IChatClient
         var user = LastText(list, ChatRole.User);
 
         // Роль заглушки определяется по системному промпту: тот же клиент обслуживает
-        // и агента-ответчика, и агента-суммаризатора.
-        var answer = system.Contains("агент-суммаризатор", StringComparison.Ordinal)
+        // и агента-ответчика, и агента-суммаризатора. Проверять вхождение подстроки в весь
+        // промпт нельзя: контекст едет в том же сообщении, и стоит графу отдать фрагмент
+        // PromptBuilder — маркер роли находится внутри чужого кода, а заглушка начинает
+        // сжимать вопрос вместо того, чтобы на него отвечать. Маркер ищем только в начале.
+        var answer = system.StartsWith(SummarizerMarker, StringComparison.Ordinal)
             ? ComposeSummary(user)
             : ComposeAnswer(user, system);
 
@@ -79,7 +85,7 @@ public sealed partial class FakeChatClient : IChatClient
         foreach (var fragment in fragments)
         {
             builder.Append("- ").Append(fragment.Title).Append(": ")
-                   .Append(Shorten(fragment.Body, 2))
+                   .Append(Describe(fragment.Body, sentences: 2))
                    .Append(" [").Append(fragment.Number).Append("]\n");
         }
 
@@ -96,8 +102,19 @@ public sealed partial class FakeChatClient : IChatClient
         var builder = new StringBuilder();
         foreach (var fragment in fragments)
         {
-            builder.Append('[').Append(fragment.Number).Append("] ").Append(fragment.Header).Append('\n')
-                   .Append(Shorten(fragment.Body, 1)).Append("\n\n");
+            builder.Append('[').Append(fragment.Number).Append("] ").Append(fragment.Header).Append('\n');
+
+            var fence = fragment.Body.IndexOf("```", StringComparison.Ordinal);
+            if (fence < 0)
+            {
+                builder.Append(Shorten(fragment.Body, 1)).Append("\n\n");
+                continue;
+            }
+
+            // Ограждение блока сохраняем: сжатый контекст возвращается инициатору и снова
+            // попадает в промпт, а без ограждения фрагмент перестанет опознаваться как код.
+            builder.Append(fragment.Body[..fence].TrimEnd()).Append("\n```text\n")
+                   .Append(FirstMeaningfulLine(fragment.Body[fence..])).Append("\n```\n\n");
         }
 
         return builder.ToString().TrimEnd();
@@ -121,6 +138,34 @@ public sealed partial class FakeChatClient : IChatClient
 
         return result;
     }
+
+    /// <summary>
+    /// Краткое описание тела фрагмента. Кодовый фрагмент режется иначе, чем проза:
+    /// деления по точке он не переживает — из «Core/Context/FileContextProvider.cs:27»
+    /// получаются три обрывка. Поэтому у кода берётся строка с местом в репозитории
+    /// и первая содержательная строка внутри блока.
+    /// </summary>
+    private static string Describe(string body, int sentences)
+    {
+        var fence = body.IndexOf("```", StringComparison.Ordinal);
+        if (fence < 0) return Shorten(body, sentences);
+
+        var meta = body[..fence].Trim().TrimStart('/', ' ');
+        var summary = Ellipsis(FirstMeaningfulLine(body[fence..]), 110);
+
+        return meta.Length == 0 ? summary : $"{meta}\n  {summary}";
+    }
+
+    /// <summary>Первая непустая строка внутри ограждённого блока.</summary>
+    private static string FirstMeaningfulLine(string fenced) =>
+        fenced.Split('\n')
+            .Skip(1)
+            .FirstOrDefault(line => line.Trim().Length > 0 &&
+                                    !line.StartsWith("```", StringComparison.Ordinal))
+            ?.Trim() ?? string.Empty;
+
+    private static string Ellipsis(string value, int max) =>
+        value.Length <= max ? value : value[..(max - 1)] + "…";
 
     private static string Shorten(string text, int sentences)
     {
